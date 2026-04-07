@@ -71,7 +71,38 @@ async def registrar(ctx, nick: str, classe: str, power: int, lvl: int):
     # Confirmação temporária (apaga após 5 segundos)
     await ctx.send(f"✅ {ctx.author.mention}, registro salvo! Seu nick foi atualizado e seus dados foram enviados à liderança.", delete_after=5)
 
-# --- 3. RELATÓRIO A CADA 48 HORAS (LIDERANÇA) ---
+
+# --- 3. ATUALIZAR STATUS (POWER E LEVEL) ---
+@bot.command()
+async def atualizar(ctx, power: int, lvl: int):
+    conn = sqlite3.connect('clm_mir4.db')
+    cursor = conn.cursor()
+
+    # Verifica se o membro já existe no banco de dados
+    cursor.execute("SELECT nick FROM membros WHERE user_id = ?", (ctx.author.id,))
+    resultado = cursor.fetchone()
+
+    if not resultado:
+        await ctx.send(f"❌ {ctx.author.mention}, você ainda não está registrado! Use o comando `!registrar` primeiro.", delete_after=10)
+        conn.close()
+        return
+
+    # Atualiza apenas o Power, Level e a data
+    cursor.execute('''UPDATE membros SET power = ?, lvl = ?, data_registro = ? 
+                      WHERE user_id = ?''', (power, lvl, datetime.now(), ctx.author.id))
+    conn.commit()
+    conn.close()
+
+    # Apaga a mensagem para manter o Power em segredo
+    try:
+        await ctx.message.delete()
+    except Exception as e:
+        pass
+
+    await ctx.send(f"✅ {ctx.author.mention}, status atualizado! Lvl: {lvl} | PS: {power:,}", delete_after=5)
+
+
+# --- 4. RELATÓRIO A CADA 48 HORAS (LIDERANÇA) ---
 @tasks.loop(hours=48)
 async def relatorio_lideranca():
     canal = bot.get_channel(ID_CANAL_LIDERANCA)
