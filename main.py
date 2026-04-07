@@ -11,7 +11,7 @@ ID_CANAL_BEM_VINDO = 123456789012345678  # Substitua pelo ID do canal de entrada
 ID_CANAL_LIDERANCA = 987654321098765432  # Substitua pelo ID do canal privado dos líderes
 
 intents = discord.Intents.default()
-intents.members = True # Necessário para ler quem entra e mudar apelidos
+intents.members = True # Necessário para ler quem entra, quem sai e mudar apelidos
 intents.message_content = True # Necessário para ler os comandos
 
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -44,10 +44,23 @@ async def on_member_join(member):
                     f"**Exemplo:** `!registrar MagoSupremo Mago 150000 85`")
         await canal.send(mensagem)
 
-# --- 2. REGISTRO COM PRIVACIDADE E MUDANÇA DE NICK ---
+# --- 2. AUTO-REMOÇÃO (SE O MEMBRO SAIR DO SERVIDOR) ---
+@bot.event
+async def on_member_remove(member):
+    conn = sqlite3.connect('clm_mir4.db')
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM membros WHERE user_id = ?", (member.id,))
+    conn.commit()
+    conn.close()
+
+    # Opcional: Avisa a liderança que os dados de quem saiu foram apagados
+    canal = bot.get_channel(ID_CANAL_LIDERANCA)
+    if canal:
+        await canal.send(f"⚠️ O membro **{member.display_name}** saiu do Discord e seus dados foram apagados do sistema.")
+
+# --- 3. REGISTRO COM PRIVACIDADE E MUDANÇA DE NICK ---
 @bot.command()
 async def registrar(ctx, nick: str, classe: str, power: int, lvl: int):
-    # Salva no banco de dados
     conn = sqlite3.connect('clm_mir4.db')
     cursor = conn.cursor()
     cursor.execute('''INSERT OR REPLACE INTO membros (user_id, nick, classe, power, lvl, data_registro) 
@@ -55,30 +68,25 @@ async def registrar(ctx, nick: str, classe: str, power: int, lvl: int):
     conn.commit()
     conn.close()
 
-    # Altera o apelido no servidor do Discord
     try:
         novo_apelido = f"{nick} | {classe}"[0:32]
         await ctx.author.edit(nick=novo_apelido)
     except Exception as e:
-        print(f"Aviso: Não consegui mudar o nick de {ctx.author.name}. O cargo do bot deve estar acima do cargo do membro nas configurações do servidor.")
+        print(f"Aviso: Não consegui mudar o nick de {ctx.author.name}.")
 
-    # APAGA a mensagem do usuário para manter o Power em segredo
     try:
         await ctx.message.delete()
     except:
         pass
 
-    # Confirmação temporária (apaga após 5 segundos)
     await ctx.send(f"✅ {ctx.author.mention}, registro salvo! Seu nick foi atualizado e seus dados foram enviados à liderança.", delete_after=5)
 
-
-# --- 3. ATUALIZAR STATUS (POWER E LEVEL) ---
+# --- 4. ATUALIZAR STATUS (POWER E LEVEL) ---
 @bot.command()
 async def atualizar(ctx, power: int, lvl: int):
     conn = sqlite3.connect('clm_mir4.db')
     cursor = conn.cursor()
 
-    # Verifica se o membro já existe no banco de dados
     cursor.execute("SELECT nick FROM membros WHERE user_id = ?", (ctx.author.id,))
     resultado = cursor.fetchone()
 
@@ -87,22 +95,49 @@ async def atualizar(ctx, power: int, lvl: int):
         conn.close()
         return
 
-    # Atualiza apenas o Power, Level e a data
     cursor.execute('''UPDATE membros SET power = ?, lvl = ?, data_registro = ? 
                       WHERE user_id = ?''', (power, lvl, datetime.now(), ctx.author.id))
     conn.commit()
     conn.close()
 
-    # Apaga a mensagem para manter o Power em segredo
     try:
         await ctx.message.delete()
-    except Exception as e:
+    except:
         pass
 
     await ctx.send(f"✅ {ctx.author.mention}, status atualizado! Lvl: {lvl} | PS: {power:,}", delete_after=5)
 
+# --- 5. REMOVER MEMBRO MANUALMENTE (EXCLUSIVO LIDERANÇA) ---
+@bot.command()
+@commands.has_permissions(administrator=True) # Apenas administradores do servidor
+async def remover(ctx, membro: discord.Member):
+    conn = sqlite3.connect('clm_mir4.db')
+    cursor = conn.cursor()
 
-# --- 4. RELATÓRIO A CADA 48 HORAS (LIDERANÇA) ---
+    cursor.execute("SELECT nick FROM membros WHERE user_id = ?", (membro.id,))
+    resultado = cursor.fetchone()
+
+    if not resultado:
+        await ctx.send(f"❌ {membro.display_name} não está registrado no banco de dados.", delete_after=10)
+        conn.close()
+        return
+
+    cursor.execute("DELETE FROM membros WHERE user_id = ?", (membro.id,))
+    conn.commit()
+    conn.close()
+
+    await ctx.send(f"🗑️ O personagem **{resultado[0]}** foi removido do banco de dados por {ctx.author.mention}.")
+
+@remover.error
+async def remover_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ Você não tem permissão da liderança para usar este comando!", delete_after=5)
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+# --- 6. RELATÓRIO A CADA 48 HORAS (LIDERANÇA) ---
 @tasks.loop(hours=48)
 async def relatorio_lideranca():
     canal = bot.get_channel(ID_CANAL_LIDERANCA)
@@ -111,7 +146,6 @@ async def relatorio_lideranca():
 
     conn = sqlite3.connect('clm_mir4.db')
     cursor = conn.cursor()
-    # Ordena do maior Power para o menor
     cursor.execute("SELECT nick, classe, power, lvl FROM membros ORDER BY power DESC")
     membros = cursor.fetchall()
     conn.close()
