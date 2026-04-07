@@ -3,16 +3,17 @@ from discord.ext import commands, tasks
 import sqlite3
 from datetime import datetime
 import os
+import threading
+from flask import Flask
 
 # --- CONFIGURAÇÕES ---
-# O Token será puxado da configuração segura da Square Cloud
 TOKEN = os.getenv('DISCORD_TOKEN') 
-ID_CANAL_BEM_VINDO = 123456789012345678  # Substitua pelo ID do canal de entrada
-ID_CANAL_LIDERANCA = 987654321098765432  # Substitua pelo ID do canal privado dos líderes
+ID_CANAL_BEM_VINDO = 123456789012345678  # Substitua pelo ID real
+ID_CANAL_LIDERANCA = 987654321098765432  # Substitua pelo ID real
 
 intents = discord.Intents.default()
-intents.members = True # Necessário para ler quem entra, quem sai e mudar apelidos
-intents.message_content = True # Necessário para ler os comandos
+intents.members = True
+intents.message_content = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -38,10 +39,8 @@ async def on_member_join(member):
     canal = bot.get_channel(ID_CANAL_BEM_VINDO)
     if canal:
         mensagem = (f"Bem-vindo(a) ao Clã, {member.mention}!\n\n"
-                    f"Para liberar seu acesso, registre seu personagem. Fique tranquilo, **seus dados ficarão ocultos** dos outros membros.\n"
-                    f"Digite o comando:\n"
-                    f"`!registrar [SeuNick] [SuaClasse] [Power] [Level]`\n\n"
-                    f"**Exemplo:** `!registrar MagoSupremo Mago 150000 85`")
+                    f"Registre seu personagem digitando:\n"
+                    f"`!registrar [SeuNick] [SuaClasse] [Power] [Level]`")
         await canal.send(mensagem)
 
 # --- 2. AUTO-REMOÇÃO (SE O MEMBRO SAIR DO SERVIDOR) ---
@@ -53,12 +52,7 @@ async def on_member_remove(member):
     conn.commit()
     conn.close()
 
-    # Opcional: Avisa a liderança que os dados de quem saiu foram apagados
-    canal = bot.get_channel(ID_CANAL_LIDERANCA)
-    if canal:
-        await canal.send(f"⚠️ O membro **{member.display_name}** saiu do Discord e seus dados foram apagados do sistema.")
-
-# --- 3. REGISTRO COM PRIVACIDADE E MUDANÇA DE NICK ---
+# --- 3. REGISTRO COM PRIVACIDADE ---
 @bot.command()
 async def registrar(ctx, nick: str, classe: str, power: int, lvl: int):
     conn = sqlite3.connect('clm_mir4.db')
@@ -72,26 +66,24 @@ async def registrar(ctx, nick: str, classe: str, power: int, lvl: int):
         novo_apelido = f"{nick} | {classe}"[0:32]
         await ctx.author.edit(nick=novo_apelido)
     except Exception as e:
-        print(f"Aviso: Não consegui mudar o nick de {ctx.author.name}.")
+        print("Aviso: Não consegui mudar o nick.")
 
     try:
         await ctx.message.delete()
     except:
         pass
 
-    await ctx.send(f"✅ {ctx.author.mention}, registro salvo! Seu nick foi atualizado e seus dados foram enviados à liderança.", delete_after=5)
+    await ctx.send(f"✅ {ctx.author.mention}, registro salvo!", delete_after=5)
 
-# --- 4. ATUALIZAR STATUS (POWER E LEVEL) ---
+# --- 4. ATUALIZAR STATUS ---
 @bot.command()
 async def atualizar(ctx, power: int, lvl: int):
     conn = sqlite3.connect('clm_mir4.db')
     cursor = conn.cursor()
 
     cursor.execute("SELECT nick FROM membros WHERE user_id = ?", (ctx.author.id,))
-    resultado = cursor.fetchone()
-
-    if not resultado:
-        await ctx.send(f"❌ {ctx.author.mention}, você ainda não está registrado! Use o comando `!registrar` primeiro.", delete_after=10)
+    if not cursor.fetchone():
+        await ctx.send(f"❌ {ctx.author.mention}, registre-se primeiro com `!registrar`.", delete_after=10)
         conn.close()
         return
 
@@ -105,39 +97,20 @@ async def atualizar(ctx, power: int, lvl: int):
     except:
         pass
 
-    await ctx.send(f"✅ {ctx.author.mention}, status atualizado! Lvl: {lvl} | PS: {power:,}", delete_after=5)
+    await ctx.send(f"✅ {ctx.author.mention}, status atualizado!", delete_after=5)
 
-# --- 5. REMOVER MEMBRO MANUALMENTE (EXCLUSIVO LIDERANÇA) ---
+# --- 5. REMOVER MEMBRO MANUALMENTE ---
 @bot.command()
-@commands.has_permissions(administrator=True) # Apenas administradores do servidor
+@commands.has_permissions(administrator=True)
 async def remover(ctx, membro: discord.Member):
     conn = sqlite3.connect('clm_mir4.db')
     cursor = conn.cursor()
-
-    cursor.execute("SELECT nick FROM membros WHERE user_id = ?", (membro.id,))
-    resultado = cursor.fetchone()
-
-    if not resultado:
-        await ctx.send(f"❌ {membro.display_name} não está registrado no banco de dados.", delete_after=10)
-        conn.close()
-        return
-
     cursor.execute("DELETE FROM membros WHERE user_id = ?", (membro.id,))
     conn.commit()
     conn.close()
+    await ctx.send(f"🗑️ Membro removido por {ctx.author.mention}.")
 
-    await ctx.send(f"🗑️ O personagem **{resultado[0]}** foi removido do banco de dados por {ctx.author.mention}.")
-
-@remover.error
-async def remover_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ Você não tem permissão da liderança para usar este comando!", delete_after=5)
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
-# --- 6. RELATÓRIO A CADA 48 HORAS (LIDERANÇA) ---
+# --- 6. RELATÓRIO A CADA 48 HORAS ---
 @tasks.loop(hours=48)
 async def relatorio_lideranca():
     canal = bot.get_channel(ID_CANAL_LIDERANCA)
@@ -153,24 +126,32 @@ async def relatorio_lideranca():
     if not membros:
         return
 
-    embed = discord.Embed(
-        title="📊 Relatório de Progresso do Clã (48h)",
-        description="Atualização de Power e Level dos membros registrados.",
-        color=discord.Color.red(),
-        timestamp=datetime.now()
-    )
-
+    embed = discord.Embed(title="📊 Relatório do Clã (48h)", color=discord.Color.red())
     lista_nicks = ""
     lista_stats = ""
-
     for m in membros:
-        nick, classe, power, lvl = m
-        lista_nicks += f"{nick} ({classe})\n"
-        lista_stats += f"Lvl: {lvl} | PS: {power:,}\n"
+        lista_nicks += f"{m[0]} ({m[1]})\n"
+        lista_stats += f"Lvl: {m[3]} | PS: {m[2]:,}\n"
 
     embed.add_field(name="Membro", value=lista_nicks, inline=True)
-    embed.add_field(name="Status (Power / Lvl)", value=lista_stats, inline=True)
-    
+    embed.add_field(name="Status", value=lista_stats, inline=True)
     await canal.send(embed=embed)
 
+
+# --- 7. O MINI-SERVIDOR WEB (NOVIDADE PARA O RENDER) ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot online!"
+
+def run_flask():
+    # O Render usa a porta 10000 por padrão, ou puxa da variável de ambiente PORT
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# Inicia o servidor Flask em uma "thread" separada para não travar o bot do Discord
+threading.Thread(target=run_flask).start()
+
+# Inicia o bot
 bot.run(TOKEN)
