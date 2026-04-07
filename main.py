@@ -9,8 +9,8 @@ import psycopg2 # A biblioteca nova para o PostgreSQL
 # --- CONFIGURAÇÕES E VARIÁVEIS DE AMBIENTE ---
 TOKEN = os.getenv('DISCORD_TOKEN') 
 DATABASE_URL = os.getenv('DATABASE_URL') # Puxamos a URL do banco do Render!
-ID_CANAL_BEM_VINDO = 123456789012345678  # Substitua pelo ID real
-ID_CANAL_LIDERANCA = 987654321098765432  # Substitua pelo ID real
+ID_CANAL_BEM_VINDO = 1317651351584378930  # Substitua pelo ID real
+ID_CANAL_LIDERANCA = 1491190966067921177  # Substitua pelo ID real
 
 intents = discord.Intents.default()
 intents.members = True
