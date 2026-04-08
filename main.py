@@ -7,14 +7,18 @@ import threading
 from flask import Flask
 import psycopg2
 
-# --- CONFIGURAÇÕES DE IDs ---
+# --- CONFIGURAÇÕES DE IDs (Mantenha estes IDs que você já validou) ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
-# IDs limpos (sem espaços invisíveis)
+
+# IDs de Cargos
 ID_CARGO_PENDENTE = 1491232641603735563
 ID_CARGO_MEMBRO_OFICIAL = 1317650718458384425
-ID_CANAL_REGISTRO = 1491227354734006364
-ID_CANAL_LIDERANCA = 1491190966067921177
+
+# IDs de Canais
+ID_CANAL_REGISTRO = 1491227354734006364    # Onde o bot dá as boas-vindas
+ID_CANAL_PENDENTE = 1491227354734006364    # Onde ficam os BOTÕES (Aprovação)
+ID_CANAL_LIDERANCA = 1491190966067921177   # Onde ficam os DADOS técnicos
 
 intents = discord.Intents.default()
 intents.members = True 
@@ -52,15 +56,19 @@ class ViewAprovacao(ui.View):
             cargo_p = guild.get_role(ID_CARGO_PENDENTE)
             cargo_o = guild.get_role(ID_CARGO_MEMBRO_OFICIAL)
             
-            # Troca os cargos e muda o nick
             try:
+                # Troca de cargos
                 if cargo_p in membro.roles:
                     await membro.remove_roles(cargo_p)
                 await membro.add_roles(cargo_o)
+                
+                # Formata o Nick: "Nick | Classe"
                 await membro.edit(nick=f"{self.nick} | {self.classe}"[0:32])
-                await membro.send(f"⚔️ **{self.nick}**, sua entrada foi aprovada! O servidor foi liberado para você.")
+                
+                # Avisa o membro no privado
+                await membro.send(f"⚔️ **{self.nick}**, sua entrada no clã foi APROVADA! O servidor foi liberado.")
             except Exception as e:
-                print(f"Erro ao editar membro: {e}")
+                print(f"Erro ao atualizar membro: {e}")
 
         await interaction.response.edit_message(content=f"✅ {membro.mention if membro else 'Usuário'} foi aprovado por {interaction.user.mention}!", embed=None, view=None)
 
@@ -82,40 +90,38 @@ async def on_member_join(member):
     
     canal_reg = bot.get_channel(ID_CANAL_REGISTRO)
     if canal_reg:
-        await canal_reg.send(f"Olá {member.mention}! Para liberar o acesso ao clã, use o comando `/registrar` preenchendo seus dados do MIR4.")
+        await canal_reg.send(f"Bem-vindo {member.mention}! Use o comando `/registrar` para iniciar sua aprovação.")
 
 # --- COMANDO SLASH: REGISTRAR ---
-@bot.tree.command(name="registrar", description="Envie seus dados para aprovação da liderança")
+@bot.tree.command(name="registrar", description="Inicia seu pedido de registro no clã")
 async def registrar(interaction: discord.Interaction, nick: str, classe: str, power: int, lvl: int):
-    # 1. Dá tempo ao bot para processar (Evita o erro de 'aplicativo não respondeu')
+    # Dá tempo ao bot para processar
     await interaction.response.defer(ephemeral=True)
 
-    # 2. Verifica se o cara já é membro
-    if any(role.id == ID_CARGO_MEMBRO_OFICIAL for role in interaction.user.roles):
-        await interaction.edit_original_response(content="Você já é um membro oficial!")
-        return
+    # 1. Cria a ficha do jogador (Embed)
+    embed = discord.Embed(title="📝 Nova Solicitação de Ingresso", color=discord.Color.blue())
+    embed.add_field(name="Usuário", value=interaction.user.mention, inline=True)
+    embed.add_field(name="Personagem", value=f"{nick} | {classe}", inline=True)
+    embed.add_field(name="Status", value=f"PS: {power:,} | Lvl: {lvl}", inline=False)
+    embed.set_footer(text=f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
-    # 3. Envia para a liderança aprovar
-    canal_adm = bot.get_channel(ID_CANAL_LIDERANCA)
-    if not canal_adm:
-        await interaction.edit_original_response(content="❌ Erro: Canal de liderança não encontrado. Avise um admin.")
-        return
+    # 2. Envia DADOS TÉCNICOS para o canal de #LIDERANÇA
+    canal_lideranca = bot.get_channel(ID_CANAL_LIDERANCA)
+    if canal_lideranca:
+        await canal_lideranca.send(f"📊 **Log de Registro:**", embed=embed)
 
-    embed = discord.Embed(title="🔔 Novo Pedido de Entrada", color=discord.Color.blue())
-    embed.add_field(name="Usuário", value=interaction.user.mention)
-    embed.add_field(name="Personagem", value=f"{nick} ({classe})")
-    embed.add_field(name="Status", value=f"PS: {power:,} | Lvl: {lvl}")
+    # 3. Envia BOTÕES DE APROVAÇÃO para o canal #PENDENTE
+    canal_pendente = bot.get_channel(ID_CANAL_PENDENTE)
+    if canal_pendente:
+        view = ViewAprovacao(interaction.user.id, nick, classe, power, lvl)
+        await canal_pendente.send(content=f"🔔 **Aguardando Decisão:** {interaction.user.mention}", embed=embed, view=view)
     
-    view = ViewAprovacao(interaction.user.id, nick, classe, power, lvl)
-    await canal_adm.send(embed=embed, view=view)
-    
-    # 4. Confirma para o usuário
-    await interaction.edit_original_response(content="✅ Seus dados foram enviados! Aguarde um líder liberar seu acesso.")
+    await interaction.edit_original_response(content="✅ Seus dados foram enviados! A liderança analisará seu pedido no canal de aprovação.")
 
 # --- FLASK (UPTIME) ---
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Bot Online!"
+def home(): return "Nazarick Bot Online!"
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
