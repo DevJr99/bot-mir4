@@ -1,136 +1,108 @@
 import discord
 from discord import app_commands, ui
-from discord.ext import commands, tasks
+from discord.ext import commands
 from datetime import datetime
 import os
 import threading
 from flask import Flask
 import psycopg2
 
-# --- CONFIGURAÇÕES (SUBSTITUA PELOS SEUS IDs) ---
+# --- CONFIGURAÇÕES DE IDs (COLOQUE OS SEUS AQUI) ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
-ID_CANAL_BEM_VINDO = 1317651351584378930         # Canal de recepção
-ID_CANAL_LIDERANCA_APROVACAO = 1491190966067921177 # Canal PRIVADO da liderança
-ID_CARGO_PENDENTE = 1491227354734006364        # ID do cargo provisório
-ID_CARGO_MEMBRO_OFICIAL = 1491227406290129047   # ID do cargo do Clã
+ID_CARGO_PENDENTE = 1491232641603735563   # Cargo que não vê quase nada
+ID_CARGO_MEMBRO_OFICIAL = 1317650718458384425 # Cargo que libera o servidor
+ID_CANAL_REGISTRO = 1491227354734006364    # Canal onde o novato deve digitar /registrar
+ID_CANAL_LIDERANCA = 1491190966067921177   # Canal onde a liderança aprova
 
 intents = discord.Intents.default()
-intents.members = True
+intents.members = True 
 intents.message_content = True
 
 class Mir4Bot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
-
     async def setup_hook(self):
-        # Sincroniza os comandos / com o Discord
         await self.tree.sync()
-        print(f"Comandos sincronizados!")
+        print("Sistema de Slash Commands sincronizado!")
 
 bot = Mir4Bot()
 
-# --- CONEXÃO BANCO DE DADOS ---
+# --- BANCO DE DADOS ---
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
-def iniciar_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS membros (
-                        user_id BIGINT PRIMARY KEY, 
-                        nick VARCHAR(255), classe VARCHAR(50), 
-                        power INTEGER, lvl INTEGER, 
-                        data_registro TIMESTAMP,
-                        aprovado BOOLEAN DEFAULT FALSE
-                    )''')
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-# --- INTERFACE DE BOTÕES ---
+# --- SISTEMA DE BOTÕES DE APROVAÇÃO ---
 class ViewAprovacao(ui.View):
-    def __init__(self, user_id, nick, classe):
+    def __init__(self, user_id, nick, classe, power, lvl):
         super().__init__(timeout=None)
         self.user_id = user_id
         self.nick = nick
         self.classe = classe
+        self.power = power
+        self.lvl = lvl
 
-    @ui.button(label="Aceitar", style=discord.ButtonStyle.success)
+    @ui.button(label="ACEITAR RECRUTA", style=discord.ButtonStyle.success)
     async def aceitar(self, interaction: discord.Interaction, button: ui.Button):
         guild = interaction.guild
         membro = guild.get_member(self.user_id)
         
-        # 1. Atualiza no Banco
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE membros SET aprovado = TRUE WHERE user_id = %s", (self.user_id,))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        # 2. Troca de Cargos e Nick
         if membro:
             cargo_p = guild.get_role(ID_CARGO_PENDENTE)
             cargo_o = guild.get_role(ID_CARGO_MEMBRO_OFICIAL)
+            
+            # Troca os cargos e muda o nick
             await membro.remove_roles(cargo_p)
             await membro.add_roles(cargo_o)
             try:
                 await membro.edit(nick=f"{self.nick} | {self.classe}"[0:32])
             except: pass
-            await membro.send(f"⚔️ **{self.nick}**, sua entrada no clã foi APROVADA! Bem-vindo!")
+            
+            await membro.send(f"⚔️ **{self.nick}**, sua entrada foi aprovada! O servidor foi liberado para você.")
 
-        await interaction.response.edit_message(content=f"✅ {membro.mention} aprovado por {interaction.user.mention}", embed=None, view=None)
+        await interaction.response.edit_message(content=f"✅ {membro.mention} foi aprovado por {interaction.user.mention}!", embed=None, view=None)
 
-    @ui.button(label="Recusar", style=discord.ButtonStyle.danger)
+    @ui.button(label="RECUSAR", style=discord.ButtonStyle.danger)
     async def recusar(self, interaction: discord.Interaction, button: ui.Button):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM membros WHERE user_id = %s", (self.user_id,))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
         membro = interaction.guild.get_member(self.user_id)
         if membro:
-            await membro.send("❌ Seu pedido de ingresso no clã foi recusado.")
-        
+            await membro.send("❌ Seu pedido de registro foi recusado pela liderança.")
         await interaction.response.edit_message(content=f"❌ Registro de {self.user_id} recusado.", embed=None, view=None)
 
-# --- EVENTOS E COMANDOS ---
+# --- EVENTO: QUANDO ALGUÉM ENTRA NO SERVIDOR ---
 @bot.event
-async def on_ready():
-    iniciar_db()
-    print(f'Bot {bot.user} pronto!')
+async def on_member_join(member):
+    # 1. Dá o cargo de pendente automaticamente
+    cargo_p = member.guild.get_role(ID_CARGO_PENDENTE)
+    if cargo_p:
+        await member.add_roles(cargo_p)
+    
+    # 2. Manda mensagem de instrução no canal de registro
+    canal_reg = bot.get_channel(ID_CANAL_REGISTRO)
+    if canal_reg:
+        await canal_reg.send(f"Olá {member.mention}! Para liberar o acesso ao clã, use o comando `/registrar` abaixo preenchendo seus dados do MIR4.")
 
-@bot.tree.command(name="registrar", description="Solicita entrada no clã")
+# --- COMANDO SLASH: REGISTRAR ---
+@bot.tree.command(name="registrar", description="Envie seus dados para aprovação da liderança")
 async def registrar(interaction: discord.Interaction, nick: str, classe: str, power: int, lvl: int):
-    # 1. Salva como pendente
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''INSERT INTO membros (user_id, nick, classe, power, lvl, data_registro) 
-                      VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING''', 
-                   (interaction.user.id, nick, classe, power, lvl, datetime.now()))
-    conn.commit()
-    cursor.close()
-    conn.close()
+    # Verifica se o cara já é membro
+    if any(role.id == ID_CARGO_MEMBRO_OFICIAL for role in interaction.user.roles):
+        await interaction.response.send_message("Você já é um membro oficial!", ephemeral=True)
+        return
 
-    # 2. Dá o cargo provisório
-    cargo_p = interaction.guild.get_role(ID_CARGO_PENDENTE)
-    await interaction.user.add_roles(cargo_p)
-    await interaction.response.send_message("✅ Solicitação enviada! Aguarde a aprovação da liderança.", ephemeral=True)
+    await interaction.response.send_message("✅ Seus dados foram enviados! Aguarde um líder liberar seu acesso.", ephemeral=True)
 
-    # 3. Manda para a Liderança
-    canal_adm = bot.get_channel(ID_CANAL_LIDERANCA_APROVACAO)
-    embed = discord.Embed(title="📝 Novo Recruta", color=discord.Color.blue())
-    embed.add_field(name="User", value=interaction.user.mention)
+    # Envia para a liderança aprovar
+    canal_adm = bot.get_channel(ID_CANAL_LIDERANCA)
+    embed = discord.Embed(title="🔔 Novo Pedido de Entrada", color=discord.Color.blue())
+    embed.add_field(name="Usuário", value=interaction.user.mention)
     embed.add_field(name="Personagem", value=f"{nick} ({classe})")
     embed.add_field(name="Status", value=f"PS: {power:,} | Lvl: {lvl}")
     
-    view = ViewAprovacao(interaction.user.id, nick, classe)
+    view = ViewAprovacao(interaction.user.id, nick, classe, power, lvl)
     await canal_adm.send(embed=embed, view=view)
 
-# --- WEB SERVER ---
+# --- FLASK (UPTIME) ---
 app = Flask(__name__)
 @app.route('/')
 def home(): return "Bot Online!"
