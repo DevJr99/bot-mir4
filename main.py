@@ -10,10 +10,10 @@ import psycopg2
 # --- CONFIGURAÇÕES (SUBSTITUA PELOS SEUS IDs) ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
-ID_CANAL_BEM_VINDO = 1234567890          # Canal de recepção
-ID_CANAL_LIDERANCA_APROVACAO = 1234567890 # Canal PRIVADO da liderança
-ID_CARGO_PENDENTE = 1234567890           # ID do cargo provisório
-ID_CARGO_MEMBRO_OFICIAL = 1234567890     # ID do cargo do Clã
+ID_CANAL_BEM_VINDO = 1317651351584378930         # Canal de recepção
+ID_CANAL_LIDERANCA_APROVACAO = 1491190966067921177 # Canal PRIVADO da liderança
+ID_CARGO_PENDENTE = 1491227354734006364        # ID do cargo provisório
+ID_CARGO_MEMBRO_OFICIAL = 1491227406290129047   # ID do cargo do Clã
 
 intents = discord.Intents.default()
 intents.members = True
