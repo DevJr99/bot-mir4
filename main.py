@@ -17,7 +17,7 @@ ID_CARGO_MEMBRO_OFICIAL = 1317650718458384425
 
 # IDs de Canais
 ID_CANAL_REGISTRO = 1491227354734006364    # Onde o bot dá as boas-vindas
-ID_CANAL_PENDENTE = 1491227354734006364    # Onde ficam os BOTÕES (Aprovação)
+ID_CANAL_PENDENTE = 1491227406290129047   # Onde ficam os BOTÕES (Aprovação)
 ID_CANAL_LIDERANCA = 1491190966067921177   # Onde ficam os DADOS técnicos
 
 intents = discord.Intents.default()
